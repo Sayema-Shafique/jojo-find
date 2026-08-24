@@ -10,14 +10,13 @@ logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://himalayas.app/jobs/api/search"
 
+# Fallback only — main.py passes config.SEARCH_QUERIES.
 SEARCHES = [
-    "QA engineer",
-    "SDET",
-    "test engineer",
-    "quality assurance",
-    "test automation",
-    "QA manager",
-    "QA architect",
+    "customer success manager",
+    "customer service manager",
+    "account manager",
+    "client relationship manager",
+    "customer experience manager",
 ]
 
 

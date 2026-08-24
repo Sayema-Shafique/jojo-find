@@ -257,6 +257,20 @@ def _get_today_sources(force_all: bool = False, tier_override: str = "") -> set[
     return active
 
 
+# Display name in SOURCE_TIERS -> the source string adapters set on JobPosting.
+_SOURCE_KEYS = {
+    "Arbeitnow": "arbeitnow",
+    "Himalayas": "himalayas",
+    "Jobicy": "jobicy",
+    "WWR": "wwr",
+    "LinkedIn": "linkedin",
+    "Remotive": "remotive",
+    "JSearch": "jsearch",
+    "Adzuna": "adzuna",
+    "Remote.co": "remoteco",
+}
+
+
 def _get_today_linkedin_locations(force_all: bool = False, group_override: str = "") -> list[str]:
     if force_all:
         return config.LINKEDIN_LOCATIONS_GROUP1 + config.LINKEDIN_LOCATIONS_GROUP2 + config.LINKEDIN_LOCATIONS_GROUP3
@@ -317,22 +331,19 @@ def main() -> None:
         adzuna_queries = config.ADZUNA_QUERIES[:1]
         adzuna_countries = config.ADZUNA_COUNTRIES[:1]
         jsearch_queries = config.JSEARCH_QUERIES[:1]
-        linkedin_queries = linkedin.QUERIES[:2]
+        linkedin_queries = config.SEARCH_QUERIES[:2]
         linkedin_locations = linkedin.LOCATIONS[:3]
-        himalayas_queries = himalayas.SEARCHES[:2]
-        relocateme_max_pages = 1
+        himalayas_queries = config.SEARCH_QUERIES[:2]
     else:
         adzuna_queries = config.ADZUNA_QUERIES
         adzuna_countries = config.ADZUNA_COUNTRIES
         jsearch_queries = config.JSEARCH_QUERIES
-        linkedin_queries = None
+        linkedin_queries = config.SEARCH_QUERIES
         linkedin_locations = today_linkedin_locs
-        himalayas_queries = None
-        relocateme_max_pages = None
+        himalayas_queries = config.SEARCH_QUERIES
 
     sources = [
         ("Arbeitnow", lambda: arbeitnow.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
-        ("RemoteOK", lambda: remoteok.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
         ("Himalayas", lambda: himalayas.fetch_jobs(queries=himalayas_queries, max_days_old=config.MAX_DAYS_OLD)),
         ("Jobicy", lambda: jobicy.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
         ("WWR", lambda: wwr.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
@@ -340,12 +351,10 @@ def main() -> None:
         ("Remotive", lambda: remotive.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
         ("JSearch", lambda: jsearch.fetch_jobs(queries=jsearch_queries, max_days_old=config.MAX_DAYS_OLD)),
         ("Adzuna", lambda: adzuna.fetch_jobs(queries=adzuna_queries, countries=adzuna_countries, max_days_old=config.MAX_DAYS_OLD)),
-        ("Landing.jobs", lambda: landingjobs.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
-        ("Wellfound", lambda: wellfound.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
         ("Remote.co", lambda: remoteco.fetch_jobs(max_days_old=config.MAX_DAYS_OLD)),
     ]
 
-    browser_sources = {"Relocate.me"}
+    browser_sources = set()
     api_sources = []
     skipped_sources = []
     for name, fetch_fn in sources:
@@ -386,12 +395,6 @@ def main() -> None:
             except Exception:
                 logger.exception("Source %s failed in thread pool", name)
                 source_counts[name] = 0
-
-    if "Relocate.me" in active_sources:
-        result = _fetch_source("Relocate.me", lambda: relocateme.fetch_jobs(max_days_old=config.MAX_DAYS_OLD, max_pages=relocateme_max_pages))
-        source_counts["Relocate.me"] = len(result)
-        result = _filter_known(result, "Relocate.me")
-        all_jobs.extend(result)
 
     if skipped_sources:
         logger.info("Skipped %d sources (not scheduled today): %s", len(skipped_sources), ", ".join(skipped_sources))
@@ -510,6 +513,31 @@ def main() -> None:
 
     logger.info("Matches above threshold (%d): %d", config.ALERT_THRESHOLD, len(matches))
 
+    # Per-source yield. A source that fetches plenty but yields nothing is
+    # pointed at the wrong category — without this it just hides behind the
+    # scorer, which is how the QA-query bug went unnoticed for a full run.
+    usable_by_source: dict[str, int] = {}
+    for job, score, _ in scored:
+        if score >= config.ALERT_THRESHOLD:
+            usable_by_source[job.source] = usable_by_source.get(job.source, 0) + 1
+
+    source_stats = []
+    for name, fetched in sorted(source_counts.items(), key=lambda kv: -kv[1]):
+        key = _SOURCE_KEYS.get(name, name.lower())
+        usable = usable_by_source.get(key, 0)
+        source_stats.append({
+            "source": name,
+            "fetched": fetched,
+            "usable": usable,
+            "yield": (100.0 * usable / fetched) if fetched else 0.0,
+        })
+
+    logger.info("--- per-source yield (fetched -> usable) ---")
+    for st in source_stats:
+        flag = "  <-- ZERO YIELD" if st["fetched"] > 20 and st["usable"] == 0 else ""
+        logger.info("  %-14s %5d -> %4d  (%.1f%%)%s",
+                    st["source"], st["fetched"], st["usable"], st["yield"], flag)
+
     ai_matches = matches[:3] if test_mode else matches
     enrichments = evaluate_matches(ai_matches)
     if enrichments:
@@ -522,7 +550,7 @@ def main() -> None:
     if test_mode:
         logger.info("TEST MODE — skipping GitHub issue creation")
     elif matches:
-        create_alert_issue(matches, enrichments, company_cache=company_cache)
+        create_alert_issue(matches, enrichments, company_cache=company_cache, source_stats=source_stats)
     else:
         logger.info("No matches found — no alert created")
 

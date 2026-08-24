@@ -7,19 +7,21 @@ from .base import JobPosting, enrich, stable_id, get_with_retry
 
 logger = logging.getLogger(__name__)
 
+# WeWorkRemotely category feeds. A renamed or wrong slug 404s, which is caught
+# per-feed below and reported — it never takes the whole source down.
 RSS_URLS = [
-    "https://weworkremotely.com/categories/remote-quality-assurance-jobs.rss",
-    "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
-    "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+    "https://weworkremotely.com/categories/remote-customer-support-jobs.rss",
+    "https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss",
+    "https://weworkremotely.com/categories/remote-management-and-finance-jobs.rss",
 ]
 
 
-def fetch_jobs(max_days_old: int = 7) -> list[JobPosting]:
+def fetch_jobs(max_days_old: int = 7, rss_urls: list[str] | None = None) -> list[JobPosting]:
     jobs: list[JobPosting] = []
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_days_old)
     seen_ids: set[str] = set()
 
-    for rss_url in RSS_URLS:
+    for rss_url in (rss_urls if rss_urls is not None else RSS_URLS):
         try:
             resp = get_with_retry(rss_url, headers={"User-Agent": "JobFinder/1.0"})
         except Exception:
@@ -32,7 +34,11 @@ def fetch_jobs(max_days_old: int = 7) -> list[JobPosting]:
             logger.exception("WWR RSS parse error for %s", rss_url)
             continue
 
-        for item in root.iter("item"):
+        items = list(root.iter("item"))
+        if not items:
+            logger.warning("WWR: no items in %s (check category slug)", rss_url)
+
+        for item in items:
             title = (item.findtext("title") or "").strip()
             link = (item.findtext("link") or "").strip()
             pub_date_str = (item.findtext("pubDate") or "").strip()

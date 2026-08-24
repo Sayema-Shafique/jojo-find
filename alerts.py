@@ -239,10 +239,32 @@ def _build_company_grouped_body(
     return "\n".join(lines)
 
 
+def _source_health_section(source_stats: list[dict] | None) -> str:
+    """Collapsed per-source yield table appended to the issue body."""
+    if not source_stats:
+        return ""
+    lines = [
+        "",
+        "<details>",
+        "<summary>Source health</summary>",
+        "",
+        "| Source | Fetched | Usable | Yield |",
+        "|---|---:|---:|---:|",
+    ]
+    for st in source_stats:
+        flag = " ⚠️" if st["fetched"] > 20 and st["usable"] == 0 else ""
+        lines.append(
+            f"| {st['source']}{flag} | {st['fetched']} | {st['usable']} | {st['yield']:.1f}% |"
+        )
+    lines += ["", "⚠️ = fetched jobs but none matched — likely pointed at the wrong category.", "</details>"]
+    return "\n".join(lines)
+
+
 def create_alert_issue(
     matches: list[tuple[JobPosting, int]],
     enrichments: dict[str, dict] | None = None,
     company_cache: dict | None = None,
+    source_stats: list[dict] | None = None,
 ) -> None:
     if not matches:
         logger.info("No matches — skipping alert")
@@ -255,6 +277,7 @@ def create_alert_issue(
     if not token:
         logger.warning("GITHUB_TOKEN not set — printing matches to stdout instead")
         body = _build_issue_body(matches, enrichments, company_cache=company_cache)
+        body += _source_health_section(source_stats)
         print(body)
         return
 
@@ -274,6 +297,7 @@ def create_alert_issue(
 
     title = f"Job Finder: {len(matches)} new matches — {today}"
     body = _build_issue_body(matches, enrichments, company_cache=company_cache)
+    body += _source_health_section(source_stats)
 
     try:
         resp = requests.post(
@@ -294,4 +318,5 @@ def create_alert_issue(
         logger.info("Created alert issue: %s", issue_url)
     except Exception:
         logger.exception("Failed to create GitHub issue — printing to stdout")
-        print(_build_issue_body(matches, enrichments, company_cache=company_cache))
+        print(_build_issue_body(matches, enrichments, company_cache=company_cache)
+              + _source_health_section(source_stats))

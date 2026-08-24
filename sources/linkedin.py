@@ -12,17 +12,13 @@ logger = logging.getLogger(__name__)
 
 GUEST_API = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 
+# Fallback only — main.py passes config.SEARCH_QUERIES for the active profile.
 QUERIES = [
-    "SDET",
-    "Senior QA Engineer",
-    "QA Architect",
-    "Test Automation Engineer",
-    "AI Quality Engineer",
-    "AI Test Engineer",
-    "QA Manager",
-    "QA Lead",
-    "Head of QA",
-    "Test Engineer quality",
+    "Customer Success Manager",
+    "Customer Service Manager",
+    "Client Relationship Manager",
+    "Customer Experience Manager",
+    "Account Manager",
 ]
 
 LOCATIONS = [

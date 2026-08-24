@@ -308,13 +308,19 @@ def activate_profile(name: str) -> None:
 # on those tokens costs nothing and catches the endless real-world variants
 # ("Senior Specialist QA", "Software QA Specialist", "Data Quality Engineer")
 # that an exact-phrase list always misses.
-TITLE_SKIP_PATTERNS = [
-    # --- Testing / QA (any form) ---
+# Testing/QA tokens are never rescued. A "Service Delivery QE/QA Banking Leader"
+# is a QA role wearing a service-delivery label, and Sayema is not applying to
+# it no matter which target phrase also appears in the title.
+TITLE_HARD_SKIP_PATTERNS = [
     r"\bq\.?a\.?\b",
+    r"\bq\.?e\.?\b",
     r"\bquality\b",
     r"\btest(er|ing|s)?\b",
     r"\bsdet\b",
     r"\bautomation\b",
+]
+
+TITLE_SKIP_PATTERNS = [
     # --- Software engineering (any form) ---
     r"\bengineer(ing|s)?\b",
     r"\bdevelope?r?s?\b",
@@ -384,6 +390,7 @@ TITLE_SKIP_PATTERNS = [
     r"\btechnician\b",
 ]
 
+TITLE_HARD_SKIP_RE = [re.compile(p) for p in TITLE_HARD_SKIP_PATTERNS]
 TITLE_SKIP_RE = [re.compile(p) for p in TITLE_SKIP_PATTERNS]
 
 # Titles that are unambiguously hers keep their place even when they collide
@@ -585,20 +592,22 @@ GEO_RESTRICTED_PENALTY = -15
 # Source scheduling
 # ============================================================
 
+# Landing.jobs, Wellfound, RemoteOK and Relocate.me were dropped: they are tech
+# hiring boards with no customer-success inventory. Their adapters remain in
+# sources/ and can be restored by adding the name back to a tier here.
 SOURCE_TIERS = {
-    "daily": ["LinkedIn", "Adzuna"],
-    "A": ["JSearch", "Remotive", "Himalayas", "Landing.jobs"],
-    "B": ["Arbeitnow", "RemoteOK", "Jobicy", "WWR"],
-    "C": ["Remote.co", "Wellfound", "Relocate.me"],
+    "daily": ["LinkedIn", "Adzuna", "JSearch", "Arbeitnow"],
+    "A": ["Jobicy", "Remotive"],
+    "B": ["Himalayas", "WWR", "Remote.co"],
 }
 
 TIER_SCHEDULE = {
     0: ["daily", "A"],
     1: ["daily", "B"],
-    2: ["daily", "C"],
-    3: ["daily", "A"],
-    4: ["daily", "B"],
-    5: ["daily", "C"],
+    2: ["daily", "A"],
+    3: ["daily", "B"],
+    4: ["daily", "A"],
+    5: ["daily", "B"],
     6: ["daily"],
 }
 

@@ -10,22 +10,35 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://remotive.com/api/remote-jobs"
 
-CATEGORIES = ["qa", "software-dev", "devops-sysadmin", "product", "data"]
+# Remotive category slugs. Unverified slugs simply return no jobs and are
+# reported by the zero-yield warning below rather than failing the source.
+CATEGORIES = ["customer-support", "sales-marketing", "business", "all-others"]
 
-SEARCHES = ["QA", "SDET", "Test", "Quality", "Automation", "Verification"]
+SEARCHES = [
+    "customer success",
+    "customer service",
+    "account manager",
+    "client relationship",
+    "customer experience",
+]
 
 
-def fetch_jobs(max_days_old: int = 7) -> list[JobPosting]:
+def fetch_jobs(max_days_old: int = 7, queries: list[str] | None = None,
+               categories: list[str] | None = None) -> list[JobPosting]:
     jobs: list[JobPosting] = []
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_days_old)
     seen_ids: set[str] = set()
 
+    use_searches = queries if queries is not None else SEARCHES
+    use_categories = categories if categories is not None else CATEGORIES
+
     search_combos = []
-    for search in SEARCHES:
+    for search in use_searches:
         search_combos.append({"search": search})
-    for category in CATEGORIES:
-        search_combos.append({"category": category, "search": "QA"})
-        search_combos.append({"category": category, "search": "test"})
+    # Whole-category sweeps: these boards are small enough that an unfiltered
+    # category pull beats guessing search terms.
+    for category in use_categories:
+        search_combos.append({"category": category})
 
     for i, params in enumerate(search_combos):
         if i > 0:
@@ -42,7 +55,11 @@ def fetch_jobs(max_days_old: int = 7) -> list[JobPosting]:
             logger.exception("Remotive API error for params=%s", params)
             continue
 
-        for item in data.get("jobs", []):
+        found = data.get("jobs", [])
+        if not found:
+            logger.warning("Remotive: no jobs for params=%s (check slug)", params)
+
+        for item in found:
             job_id = str(item.get("id", ""))
             if job_id in seen_ids:
                 continue

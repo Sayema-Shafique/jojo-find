@@ -7,7 +7,13 @@ from .base import JobPosting, enrich, stable_id, get_with_retry
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://remote.co/remote-jobs/qa"
+# Remote.co category pages. Was pinned to /qa. A wrong slug is caught per-URL
+# in the loop below and warned, not fatal.
+BASE_URLS = [
+    "https://remote.co/remote-jobs/customer-service",
+    "https://remote.co/remote-jobs/sales",
+    "https://remote.co/remote-jobs/accounting-finance",
+]
 
 
 def _strip_html(html: str) -> str:
@@ -33,21 +39,9 @@ def _fetch_description(url: str) -> str:
     return ""
 
 
-def fetch_jobs(max_days_old: int = 30) -> list[JobPosting]:
+def fetch_jobs(max_days_old: int = 30, base_urls: list[str] | None = None) -> list[JobPosting]:
     jobs: list[JobPosting] = []
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_days_old)
-
-    try:
-        resp = get_with_retry(
-            BASE_URL,
-            headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-            },
-        )
-        html = resp.text
-    except Exception:
-        logger.exception("Remote.co scrape error")
-        return jobs
 
     try:
         from bs4 import BeautifulSoup
@@ -55,6 +49,30 @@ def fetch_jobs(max_days_old: int = 30) -> list[JobPosting]:
         logger.warning("beautifulsoup4 not installed — skipping Remote.co")
         return jobs
 
+    for base_url in (base_urls if base_urls is not None else BASE_URLS):
+        before = len(jobs)
+        try:
+            resp = get_with_retry(
+                base_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+                },
+            )
+            html = resp.text
+        except Exception:
+            logger.exception("Remote.co scrape error for %s", base_url)
+            continue
+
+        jobs.extend(_scrape_page(html, BeautifulSoup, cutoff))
+        if len(jobs) == before:
+            logger.warning("Remote.co: no jobs from %s (check category slug)", base_url)
+
+    logger.info("Remote.co: fetched %d jobs", len(jobs))
+    return jobs
+
+
+def _scrape_page(html, BeautifulSoup, cutoff) -> list[JobPosting]:
+    jobs: list[JobPosting] = []
     soup = BeautifulSoup(html, "lxml")
 
     for card in soup.select(".card, .job_listing, article"):
@@ -110,5 +128,4 @@ def fetch_jobs(max_days_old: int = 30) -> list[JobPosting]:
         )
         jobs.append(enrich(job))
 
-    logger.info("Remote.co: fetched %d jobs", len(jobs))
     return jobs

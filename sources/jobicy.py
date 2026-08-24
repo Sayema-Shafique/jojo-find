@@ -9,15 +9,17 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://jobicy.com/api/v2/remote-jobs"
 
-JOBICY_TAGS = ["dev", "devops", "data", "management"]
+# Jobicy industry tags. "management" is kept — it was the best-yielding tag in
+# the audit (30.7%). Unknown tags return nothing and are warned on below.
+JOBICY_TAGS = ["supporting", "sales", "marketing", "business", "management"]
 
 
-def fetch_jobs(max_days_old: int = 3) -> list[JobPosting]:
+def fetch_jobs(max_days_old: int = 3, tags: list[str] | None = None) -> list[JobPosting]:
     jobs: list[JobPosting] = []
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_days_old)
     seen_ids: set[str] = set()
 
-    for tag in JOBICY_TAGS:
+    for tag in (tags if tags is not None else JOBICY_TAGS):
         try:
             resp = requests.get(
                 API_URL,
@@ -30,7 +32,11 @@ def fetch_jobs(max_days_old: int = 3) -> list[JobPosting]:
             logger.exception("Jobicy API error for tag=%s", tag)
             continue
 
-        for item in data.get("jobs", []):
+        found = data.get("jobs", [])
+        if not found:
+            logger.warning("Jobicy: no jobs for tag=%s (check tag name)", tag)
+
+        for item in found:
             item_id = str(item.get("id", ""))
             if item_id in seen_ids:
                 continue
