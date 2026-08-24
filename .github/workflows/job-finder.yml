@@ -1,0 +1,110 @@
+name: Job Finder
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test mode -- caps API calls, skips issue creation and state updates'
+        required: false
+        type: boolean
+        default: false
+      run_all:
+        description: 'Run all sources regardless of schedule'
+        required: false
+        type: boolean
+        default: false
+      source_tier:
+        description: 'Source tier to run (auto = follow daily schedule)'
+        required: false
+        type: choice
+        default: 'auto'
+        options:
+          - auto
+          - A
+          - B
+          - C
+          - D
+          - all
+      linkedin_group:
+        description: 'LinkedIn location group (auto = follow daily schedule)'
+        required: false
+        type: choice
+        default: 'auto'
+        options:
+          - auto
+          - '1'
+          - '2'
+          - '3'
+          - all
+          - none
+      role_profile:
+        description: 'Role profile to use'
+        required: false
+        type: choice
+        default: 'customer_success'
+        options:
+          - customer_success
+          - business_development
+          - data_analyst
+
+concurrency:
+  group: job-finder
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  contents: write
+  pages: write
+
+jobs:
+  find-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: playwright install chromium
+
+      - name: Run job finder
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TRACKER_API_URL: ${{ secrets.TRACKER_API_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: Sayema-Shafique
+          REPO_NAME: jojo-find
+          TEST_MODE: ${{ inputs.test_mode }}
+          RUN_ALL_SOURCES: ${{ inputs.run_all }}
+          SOURCE_TIER: ${{ inputs.source_tier }}
+          LINKEDIN_GROUP: ${{ inputs.linkedin_group }}
+          ROLE_PROFILE: ${{ inputs.role_profile || 'customer_success' }}
+        run: python main.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ docs/
+          git diff --cached --quiet || git commit -m "Update job finder data and dashboard"
+          git pull --rebase origin main
+          git push

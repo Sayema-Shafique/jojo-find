@@ -1,0 +1,496 @@
+import json
+import logging
+import os
+import shutil
+
+logger = logging.getLogger(__name__)
+
+DOCS_DIR = os.path.join(os.path.dirname(__file__), "docs")
+JOBS_DATA_SRC = os.path.join(os.path.dirname(__file__), "data", "jobs.json")
+
+
+COMPANY_CACHE_SRC = os.path.join(os.path.dirname(__file__), "data", "company_cache.json")
+
+
+def generate_dashboard(company_cache: dict | None = None) -> None:
+    os.makedirs(DOCS_DIR, exist_ok=True)
+
+    jobs_data_dest = os.path.join(DOCS_DIR, "jobs.json")
+    if os.path.exists(JOBS_DATA_SRC):
+        with open(JOBS_DATA_SRC) as f:
+            data = f.read()
+        with open(jobs_data_dest, "w") as f:
+            f.write(data)
+
+    cache_dest = os.path.join(DOCS_DIR, "company_cache.json")
+    if company_cache:
+        with open(cache_dest, "w") as f:
+            json.dump(company_cache, f, indent=2)
+    elif os.path.exists(COMPANY_CACHE_SRC):
+        with open(COMPANY_CACHE_SRC) as f:
+            cache_data = f.read()
+        with open(cache_dest, "w") as f:
+            f.write(cache_data)
+
+    html = _build_html()
+    out_path = os.path.join(DOCS_DIR, "index.html")
+    with open(out_path, "w") as f:
+        f.write(html)
+
+    logger.info("Dashboard generated: %s", out_path)
+
+
+def _build_html() -> str:
+    return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sayema Job Finder</title>
+<style>
+:root {
+  --bg: #f8f9fa; --card: #fff; --text: #1a1a2e; --muted: #6c757d;
+  --border: #dee2e6; --accent: #4361ee; --accent-light: #e8ecff;
+  --top: #2d6a4f; --top-bg: #d8f3dc; --good: #e85d04; --good-bg: #fff3e0;
+  --look: #6c757d; --look-bg: #f0f0f0;
+  --applied: #4361ee; --bookmarked: #e85d04; --interview: #2d6a4f;
+  --rejected: #dc3545; --skipped: #adb5bd;
+  --visa-yes: #2d6a4f; --visa-no: #dc3545; --visa-unknown: #6c757d;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e;
+    --border: #30363d; --accent: #58a6ff; --accent-light: #1c2d41;
+    --top: #3fb950; --top-bg: #0d2818; --good: #d29922; --good-bg: #2a1f00;
+    --look: #8b949e; --look-bg: #21262d;
+    --applied: #58a6ff; --bookmarked: #d29922; --interview: #3fb950;
+    --rejected: #f85149; --skipped: #484f58;
+    --visa-yes: #3fb950; --visa-no: #f85149; --visa-unknown: #8b949e;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+.container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.5rem; margin-bottom: 8px; }
+.stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 100px; }
+.stat-value { font-size: 1.5rem; font-weight: 700; }
+.stat-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
+.filters input, .filters select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font-size: 0.875rem; }
+.filters input { flex: 1; min-width: 200px; }
+.filters select { min-width: 120px; }
+.job-list { display: flex; flex-direction: column; gap: 8px; }
+.job-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: pointer; transition: border-color 0.15s; }
+.job-card:hover { border-color: var(--accent); }
+.job-header { display: flex; align-items: center; padding: 12px 16px; gap: 12px; }
+.score-badge { min-width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.875rem; flex-shrink: 0; }
+.score-top { background: var(--top-bg); color: var(--top); }
+.score-good { background: var(--good-bg); color: var(--good); }
+.score-look { background: var(--look-bg); color: var(--look); }
+.job-info { flex: 1; min-width: 0; }
+.job-title { font-weight: 600; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.job-meta { font-size: 0.8rem; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.job-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.tag { font-size: 0.65rem; padding: 1px 6px; border-radius: 3px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
+.tag-seniority { background: var(--accent-light); color: var(--accent); }
+.tag-remote { background: var(--top-bg); color: var(--top); }
+.tag-hybrid { background: var(--good-bg); color: var(--good); }
+.tag-onsite { background: var(--look-bg); color: var(--look); }
+.tag-jobtype { background: var(--look-bg); color: var(--muted); }
+.tag-visa-yes { background: var(--top-bg); color: var(--visa-yes); }
+.tag-visa-no { background: #fde8e8; color: var(--visa-no); }
+.tag-salary { background: var(--accent-light); color: var(--accent); }
+.job-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.status-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); color: var(--muted); font-size: 0.7rem; cursor: pointer; transition: all 0.15s; }
+.status-btn:hover { border-color: var(--accent); color: var(--accent); }
+.status-btn.active-applied { background: var(--applied); color: #fff; border-color: var(--applied); }
+.status-btn.active-bookmarked { background: var(--bookmarked); color: #fff; border-color: var(--bookmarked); }
+.status-btn.active-interview { background: var(--interview); color: #fff; border-color: var(--interview); }
+.status-btn.active-rejected { background: var(--rejected); color: #fff; border-color: var(--rejected); }
+.status-btn.active-skipped { background: var(--skipped); color: #fff; border-color: var(--skipped); }
+.job-details { display: none; padding: 0 16px 16px 72px; }
+.job-details.open { display: block; }
+.breakdown { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.breakdown-chip { font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: var(--accent-light); color: var(--accent); }
+.description { font-size: 0.85rem; color: var(--muted); max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; margin-bottom: 12px; }
+.view-link { display: inline-block; padding: 6px 14px; background: var(--accent); color: #fff; border-radius: 6px; text-decoration: none; font-size: 0.85rem; }
+.view-link:hover { opacity: 0.9; }
+.empty { text-align: center; padding: 40px; color: var(--muted); }
+@media (prefers-color-scheme: dark) {
+  .tag-visa-no { background: #3d1f1f; }
+}
+.group-toggle { padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font-size: 0.875rem; cursor: pointer; transition: all 0.15s; }
+.group-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.company-group { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+.company-header { display: flex; align-items: center; padding: 12px 16px; gap: 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.company-header:hover { background: var(--accent-light); }
+.company-name { font-weight: 700; font-size: 1rem; }
+.company-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.company-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.badge-jobs { background: var(--accent-light); color: var(--accent); }
+.badge-score { background: var(--top-bg); color: var(--top); }
+.badge-ai-core { background: #e8f5e9; color: #2e7d32; }
+.badge-ai-partial { background: #fff3e0; color: #e65100; }
+.badge-visa { background: var(--top-bg); color: var(--visa-yes); }
+.badge-funded { background: var(--accent-light); color: var(--accent); }
+.badge-employees { background: var(--look-bg); color: var(--muted); }
+.company-jobs { display: none; }
+.company-jobs.open { display: block; }
+@media (prefers-color-scheme: dark) {
+  .badge-ai-core { background: #1b3a1b; color: #66bb6a; }
+  .badge-ai-partial { background: #2a1f00; color: #ffb74d; }
+}
+.pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+.pagination button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font-size: 0.85rem; cursor: pointer; }
+.pagination button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+.pagination button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pagination .page-info { font-size: 0.8rem; color: var(--muted); }
+@media (max-width: 640px) {
+  .job-header { flex-wrap: wrap; }
+  .job-actions { width: 100%; justify-content: flex-start; margin-top: 4px; }
+  .job-details { padding-left: 16px; }
+  .filters { flex-direction: column; }
+  .filters input, .filters select { width: 100%; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Job Finder Dashboard</h1>
+  <div class="stats" id="stats"></div>
+  <div class="filters">
+    <input type="text" id="search" placeholder="Search jobs...">
+    <select id="tierFilter"><option value="">All tiers</option><option value="top">Top Match (55+)</option><option value="good">Good Match (40-54)</option><option value="look">Worth a Look (25-39)</option></select>
+    <select id="sourceFilter"><option value="">All sources</option></select>
+    <select id="seniorityFilter"><option value="">All levels</option><option value="director">Director</option><option value="principal">Principal</option><option value="staff">Staff</option><option value="lead">Lead</option><option value="senior">Senior</option><option value="mid">Mid</option><option value="junior">Junior</option></select>
+    <select id="remoteFilter"><option value="">All work types</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select>
+    <select id="visaFilter"><option value="">All visa</option><option value="yes">Sponsors visa</option><option value="no">No sponsorship</option></select>
+    <select id="statusFilter"><option value="">All statuses</option><option value="new">New</option><option value="bookmarked">Bookmarked</option><option value="applied">Applied</option><option value="interview">Interviewing</option><option value="rejected">Rejected</option><option value="skipped">Skipped</option></select>
+    <select id="sortBy"><option value="score">Sort: Score</option><option value="date">Sort: Date</option><option value="company">Sort: Company</option><option value="salary">Sort: Salary</option></select>
+    <button class="group-toggle" id="groupToggle" onclick="toggleGroupView()">Group by Company</button>
+  </div>
+  <div class="job-list" id="jobList"></div>
+  <div class="pagination" id="pagination"></div>
+</div>
+<script>
+let allJobs = [];
+let statusStore = {};
+let apiAvailable = false;
+let companyCache = {};
+let groupByCompany = false;
+let currentPage = 1;
+const PAGE_SIZE = 20;
+let lastFiltered = [];
+
+async function loadStatuses() {
+  try {
+    const resp = await fetch('/api/statuses');
+    if (resp.ok) {
+      const data = await resp.json();
+      statusStore = {};
+      for (const [id, val] of Object.entries(data)) {
+        statusStore[id] = typeof val === 'string' ? val : (val.status || 'new');
+      }
+      apiAvailable = true;
+      return;
+    }
+  } catch (e) {}
+  statusStore = JSON.parse(localStorage.getItem('jobStatuses') || '{}');
+}
+
+function getStatus(id) { return statusStore[id] || 'new'; }
+
+async function setStatus(id, newStatus) {
+  const prev = statusStore[id];
+  if (newStatus === 'new') { delete statusStore[id]; } else { statusStore[id] = newStatus; }
+  if (apiAvailable) {
+    try {
+      await fetch('/api/status/' + encodeURIComponent(id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+    } catch (e) {
+      if (prev) { statusStore[id] = prev; } else { delete statusStore[id]; }
+    }
+  } else {
+    localStorage.setItem('jobStatuses', JSON.stringify(statusStore));
+  }
+}
+
+function getTier(score) {
+  if (score >= 55) return 'top';
+  if (score >= 40) return 'good';
+  return 'look';
+}
+
+function tierClass(score) { return 'score-' + getTier(score); }
+
+function formatSalary(job) {
+  if (!job.salary_min && !job.salary_max) return '';
+  const cur = job.salary_currency || '';
+  const fmt = n => n >= 1000 ? (n / 1000).toFixed(0) + 'k' : n.toString();
+  if (job.salary_min && job.salary_max) return cur + ' ' + fmt(job.salary_min) + '-' + fmt(job.salary_max);
+  if (job.salary_min) return cur + ' ' + fmt(job.salary_min) + '+';
+  return cur + ' up to ' + fmt(job.salary_max);
+}
+
+function renderStats(jobs) {
+  const total = jobs.length;
+  const applied = jobs.filter(j => getStatus(j.id) === 'applied').length;
+  const newCount = jobs.filter(j => getStatus(j.id) === 'new').length;
+  const top = jobs.filter(j => j.score >= 55).length;
+  const remote = jobs.filter(j => j.remote_type === 'remote').length;
+  const visa = jobs.filter(j => j.visa_sponsorship === 'yes').length;
+  document.getElementById('stats').innerHTML = [
+    {v: total, l: 'Total Jobs'}, {v: newCount, l: 'New'}, {v: top, l: 'Top Matches'},
+    {v: remote, l: 'Remote'}, {v: visa, l: 'Visa OK'}, {v: applied, l: 'Applied'}
+  ].map(s => '<div class="stat"><div class="stat-value">' + s.v + '</div><div class="stat-label">' + s.l + '</div></div>').join('');
+}
+
+function buildTags(j) {
+  let html = '';
+  if (j.seniority) html += '<span class="tag tag-seniority">' + esc(j.seniority) + '</span>';
+  if (j.remote_type === 'remote') html += '<span class="tag tag-remote">Remote</span>';
+  else if (j.remote_type === 'hybrid') html += '<span class="tag tag-hybrid">Hybrid</span>';
+  else if (j.remote_type === 'onsite') html += '<span class="tag tag-onsite">On-site</span>';
+  if (j.job_type) html += '<span class="tag tag-jobtype">' + esc(j.job_type) + '</span>';
+  if (j.visa_sponsorship === 'yes') html += '<span class="tag tag-visa-yes">Visa</span>';
+  else if (j.visa_sponsorship === 'no') html += '<span class="tag tag-visa-no">No visa</span>';
+  const sal = formatSalary(j);
+  if (sal.trim()) html += '<span class="tag tag-salary">' + esc(sal.trim()) + '</span>';
+  return html;
+}
+
+function renderJobs(jobs) {
+  const list = document.getElementById('jobList');
+  if (!jobs.length) { list.innerHTML = '<div class="empty">No jobs match your filters</div>'; return; }
+  list.innerHTML = jobs.map(j => {
+    const status = getStatus(j.id);
+    const bd = j.breakdown || {};
+    const statuses = ['bookmarked','applied','interview','rejected','skipped'];
+    const safeUrl = (j.url && (j.url.startsWith('http://') || j.url.startsWith('https://'))) ? esc(j.url) : '';
+    return '<div class="job-card" data-id="' + esc(j.id) + '">' +
+      '<div class="job-header">' +
+        '<div class="score-badge ' + tierClass(j.score) + '">' + j.score + '</div>' +
+        '<div class="job-info">' +
+          '<div class="job-title">' + esc(j.title) + '</div>' +
+          '<div class="job-meta"><span>' + esc(j.company) + '</span><span>' + esc(j.location) + '</span><span>' + esc(j.source) + '</span><span>' + esc(j.date_posted) + '</span></div>' +
+          '<div class="job-tags">' + buildTags(j) + '</div>' +
+        '</div>' +
+        '<div class="job-actions">' +
+          statuses.map(s => '<button class="status-btn' + (status === s ? ' active-' + s : '') + '" data-status="' + s + '">' + s.charAt(0).toUpperCase() + s.slice(1) + '</button>').join('') +
+        '</div>' +
+      '</div>' +
+      '<div class="job-details">' +
+        '<div class="breakdown">' +
+          (bd.title ? '<span class="breakdown-chip">Title: ' + bd.title + '</span>' : '') +
+          (bd.skills ? '<span class="breakdown-chip">Skills: ' + bd.skills + '</span>' : '') +
+          (bd.location ? '<span class="breakdown-chip">Location: ' + bd.location + '</span>' : '') +
+          (bd.visa ? '<span class="breakdown-chip">Visa: ' + bd.visa + '</span>' : '') +
+          (bd.seniority ? '<span class="breakdown-chip">Seniority: ' + esc(bd.seniority) + ' (' + bd.seniority_score + ')</span>' : '') +
+          (bd.remote_type ? '<span class="breakdown-chip">Work: ' + esc(bd.remote_type) + '</span>' : '') +
+          (bd.job_type ? '<span class="breakdown-chip">Type: ' + esc(bd.job_type) + '</span>' : '') +
+          (bd.visa_status ? '<span class="breakdown-chip">Visa: ' + esc(bd.visa_status) + '</span>' : '') +
+        '</div>' +
+        '<div class="description">' + esc(j.description || '').substring(0, 2000) + '</div>' +
+        (j.salary ? '<div style="margin-bottom:8px;font-size:0.85rem">Salary: ' + esc(j.salary) + '</div>' : '') +
+        (safeUrl ? '<a class="view-link" href="' + safeUrl + '" target="_blank" rel="noopener">View Original</a>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+document.addEventListener('click', async function(e) {
+  const statusBtn = e.target.closest('.status-btn[data-status]');
+  if (statusBtn) {
+    e.stopPropagation();
+    const card = statusBtn.closest('.job-card');
+    if (!card) return;
+    const id = card.dataset.id;
+    const status = statusBtn.dataset.status;
+    const current = getStatus(id);
+    await setStatus(id, current === status ? 'new' : status);
+    applyFilters();
+    return;
+  }
+  const header = e.target.closest('.job-header');
+  if (header && !e.target.closest('.job-actions')) {
+    const details = header.nextElementSibling;
+    details.classList.toggle('open');
+  }
+});
+
+function toggleGroupView() {
+  groupByCompany = !groupByCompany;
+  document.getElementById('groupToggle').classList.toggle('active', groupByCompany);
+  applyFilters();
+}
+
+function renderGroupedJobs(jobs) {
+  const list = document.getElementById('jobList');
+  if (!jobs.length) { list.innerHTML = '<div class="empty">No jobs match your filters</div>'; return; }
+  const groups = {};
+  for (const j of jobs) {
+    const key = j.company_normalized || j.company.toLowerCase();
+    if (!groups[key]) groups[key] = { jobs: [], bestScore: 0, name: j.company };
+    groups[key].jobs.push(j);
+    if (j.score > groups[key].bestScore) {
+      groups[key].bestScore = j.score;
+      groups[key].name = j.company;
+    }
+  }
+  const sorted = Object.entries(groups).sort((a, b) => b[1].bestScore - a[1].bestScore);
+  list.innerHTML = sorted.map(([key, g]) => {
+    const cc = companyCache[key] || {};
+    const displayName = cc.canonical_name || g.name;
+    let badges = '<span class="company-badge badge-jobs">' + g.jobs.length + ' job' + (g.jobs.length > 1 ? 's' : '') + '</span>';
+    badges += '<span class="company-badge badge-score">Best: ' + g.bestScore + '</span>';
+    if (cc.ai_relevance === 'core') badges += '<span class="company-badge badge-ai-core">AI Core</span>';
+    else if (cc.ai_relevance === 'partial') badges += '<span class="company-badge badge-ai-partial">AI Partial</span>';
+    if (cc.visa_likelihood === 'likely') badges += '<span class="company-badge badge-visa">Visa Likely</span>';
+    if (cc.funding_stage && cc.funding_stage !== 'unknown') badges += '<span class="company-badge badge-funded">' + esc(cc.funding_stage) + '</span>';
+    if (cc.employee_count_range && cc.employee_count_range !== 'unknown') badges += '<span class="company-badge badge-employees">' + esc(cc.employee_count_range) + ' emp</span>';
+    const jobCards = g.jobs.sort((a, b) => b.score - a.score).map(j => {
+      const status = getStatus(j.id);
+      const statuses = ['bookmarked','applied','interview','rejected','skipped'];
+      const safeUrl = (j.url && (j.url.startsWith('http://') || j.url.startsWith('https://'))) ? esc(j.url) : '';
+      return '<div class="job-card" data-id="' + esc(j.id) + '" style="border:none;border-bottom:1px solid var(--border)">' +
+        '<div class="job-header">' +
+          '<div class="score-badge ' + tierClass(j.score) + '">' + j.score + '</div>' +
+          '<div class="job-info">' +
+            '<div class="job-title">' + esc(j.title) + '</div>' +
+            '<div class="job-meta"><span>' + esc(j.location) + '</span><span>' + esc(j.source) + '</span><span>' + esc(j.date_posted) + '</span></div>' +
+            '<div class="job-tags">' + buildTags(j) + '</div>' +
+          '</div>' +
+          '<div class="job-actions">' +
+            statuses.map(s => '<button class="status-btn' + (status === s ? ' active-' + s : '') + '" data-status="' + s + '">' + s.charAt(0).toUpperCase() + s.slice(1) + '</button>').join('') +
+          '</div>' +
+        '</div>' +
+        '<div class="job-details">' +
+          '<div class="description">' + esc(j.description || '').substring(0, 2000) + '</div>' +
+          (safeUrl ? '<a class="view-link" href="' + safeUrl + '" target="_blank" rel="noopener">View Original</a>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
+    return '<div class="company-group">' +
+      '<div class="company-header" onclick="this.nextElementSibling.classList.toggle(\'open\')">' +
+        '<div class="company-name">' + esc(displayName) + '</div>' +
+        '<div class="company-badges">' + badges + '</div>' +
+      '</div>' +
+      '<div class="company-jobs open">' + jobCards + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function applyFilters(resetPage) {
+  if (resetPage !== false) currentPage = 1;
+  const search = document.getElementById('search').value.toLowerCase();
+  const tier = document.getElementById('tierFilter').value;
+  const source = document.getElementById('sourceFilter').value;
+  const seniority = document.getElementById('seniorityFilter').value;
+  const remote = document.getElementById('remoteFilter').value;
+  const visa = document.getElementById('visaFilter').value;
+  const status = document.getElementById('statusFilter').value;
+  const sort = document.getElementById('sortBy').value;
+
+  let filtered = allJobs.filter(j => {
+    if (search && !(j.title + ' ' + j.company + ' ' + j.description + ' ' + j.location).toLowerCase().includes(search)) return false;
+    if (tier && getTier(j.score) !== tier) return false;
+    if (source && j.source !== source) return false;
+    if (seniority && j.seniority !== seniority) return false;
+    if (remote && j.remote_type !== remote) return false;
+    if (visa && j.visa_sponsorship !== visa) return false;
+    if (status && getStatus(j.id) !== status) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (sort === 'score') return b.score - a.score;
+    if (sort === 'date') return (b.date_posted || '').localeCompare(a.date_posted || '');
+    if (sort === 'company') return (a.company || '').localeCompare(b.company || '');
+    if (sort === 'salary') return (b.salary_max || b.salary_min || 0) - (a.salary_max || a.salary_min || 0);
+    return 0;
+  });
+
+  lastFiltered = filtered;
+  renderStats(allJobs);
+  if (groupByCompany) {
+    renderGroupedJobs(filtered);
+    document.getElementById('pagination').innerHTML = '';
+  } else {
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const pageJobs = filtered.slice(start, start + PAGE_SIZE);
+    renderJobs(pageJobs);
+    renderPagination(filtered.length, totalPages);
+  }
+}
+
+function renderPagination(total, totalPages) {
+  const el = document.getElementById('pagination');
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  const start = (currentPage - 1) * PAGE_SIZE + 1;
+  const end = Math.min(currentPage * PAGE_SIZE, total);
+  let html = '<button onclick="goPage(1)" ' + (currentPage === 1 ? 'disabled' : '') + '>&laquo;</button>';
+  html += '<button onclick="goPage(' + (currentPage - 1) + ')" ' + (currentPage === 1 ? 'disabled' : '') + '>&lsaquo;</button>';
+  const maxBtns = 7;
+  let pStart = Math.max(1, currentPage - Math.floor(maxBtns / 2));
+  let pEnd = Math.min(totalPages, pStart + maxBtns - 1);
+  if (pEnd - pStart < maxBtns - 1) pStart = Math.max(1, pEnd - maxBtns + 1);
+  for (let p = pStart; p <= pEnd; p++) {
+    html += '<button onclick="goPage(' + p + ')" class="' + (p === currentPage ? 'active' : '') + '">' + p + '</button>';
+  }
+  html += '<button onclick="goPage(' + (currentPage + 1) + ')" ' + (currentPage === totalPages ? 'disabled' : '') + '>&rsaquo;</button>';
+  html += '<button onclick="goPage(' + totalPages + ')" ' + (currentPage === totalPages ? 'disabled' : '') + '>&raquo;</button>';
+  html += '<span class="page-info">' + start + '-' + end + ' of ' + total + '</span>';
+  el.innerHTML = html;
+}
+
+function goPage(p) {
+  currentPage = p;
+  applyFilters(false);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function init() {
+  try {
+    const [jobsResp, cacheResp] = await Promise.all([
+      fetch('jobs.json'),
+      fetch('company_cache.json').catch(() => ({ ok: false }))
+    ]);
+    allJobs = await jobsResp.json();
+    if (cacheResp.ok) {
+      companyCache = await cacheResp.json();
+    }
+  } catch (e) {
+    allJobs = [];
+  }
+
+  await loadStatuses();
+
+  const sources = [...new Set(allJobs.map(j => j.source))].sort();
+  const sf = document.getElementById('sourceFilter');
+  sources.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; sf.appendChild(o); });
+
+  document.getElementById('search').addEventListener('input', applyFilters);
+  document.getElementById('tierFilter').addEventListener('change', applyFilters);
+  document.getElementById('sourceFilter').addEventListener('change', applyFilters);
+  document.getElementById('seniorityFilter').addEventListener('change', applyFilters);
+  document.getElementById('remoteFilter').addEventListener('change', applyFilters);
+  document.getElementById('visaFilter').addEventListener('change', applyFilters);
+  document.getElementById('statusFilter').addEventListener('change', applyFilters);
+  document.getElementById('sortBy').addEventListener('change', applyFilters);
+
+  applyFilters();
+}
+
+init();
+</script>
+</body>
+</html>'''
