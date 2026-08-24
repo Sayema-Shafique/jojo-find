@@ -62,25 +62,34 @@ def score_job(job: JobPosting, company_enrichment: dict | None = None) -> tuple[
     location = _normalize(job.location)
 
     # --- Title skip filter (negative gate) ---
-    skip_reason = ""
-    for skip_kw in config.TITLE_SKIP:
-        if _word_boundary_match(skip_kw, title):
-            skip_reason = skip_kw
-            break
-
-    if skip_reason:
-        return 0, {"skip_reason": f"title_skip: {skip_reason}"}
+    rescued = any(p.search(title) for p in config.TITLE_RESCUE_RE)
+    if not rescued:
+        for pattern in config.TITLE_SKIP_RE:
+            m = pattern.search(title)
+            if m:
+                return 0, {"skip_reason": f"title_skip: {m.group(0)!r} ({pattern.pattern})"}
 
     # --- Skills scoring (primary signal) ---
-    skills_score = 0
+    # Core keywords carry the domain signal; everything else is supporting
+    # evidence and is capped so filler cannot reach SKILLS_CAP on its own.
+    core_score = 0
+    generic_score = 0
+    matched_core = []
     for keyword, weight in config.SKILL_KEYWORDS.items():
         if keyword in _BOUNDARY_CHECK_SKILLS:
-            if _word_boundary_match(keyword, full_text):
-                skills_score += weight
+            hit = _word_boundary_match(keyword, full_text)
         else:
-            if keyword in full_text:
-                skills_score += weight
-    skills_score = min(skills_score, config.SKILLS_CAP)
+            hit = keyword in full_text
+        if not hit:
+            continue
+        if weight >= config.CORE_SKILL_WEIGHT:
+            core_score += weight
+            matched_core.append(keyword)
+        else:
+            generic_score += weight
+
+    generic_score = min(generic_score, config.GENERIC_SKILLS_CAP)
+    skills_score = min(core_score + generic_score, config.SKILLS_CAP)
 
     # --- Visa scoring ---
     visa_score = 0
@@ -156,8 +165,8 @@ def score_job(job: JobPosting, company_enrichment: dict | None = None) -> tuple[
 
     short_desc_penalty = config.SHORT_DESC_PENALTY if len(description) < config.SHORT_DESC_THRESHOLD else 0
 
-    # --- Total (skills-based gate) ---
-    if skills_score < config.SKILLS_MIN:
+    # --- Total (core-skill gate, then overall skills gate) ---
+    if core_score < config.CORE_SKILL_MIN or skills_score < config.SKILLS_MIN:
         total = 0
     else:
         total = (
@@ -175,6 +184,9 @@ def score_job(job: JobPosting, company_enrichment: dict | None = None) -> tuple[
 
     breakdown = {
         "skills": skills_score,
+        "skills_core": core_score,
+        "skills_generic": generic_score,
+        "matched_core": matched_core,
         "location": location_score,
         "location_raw": raw_location_score,
         "visa": visa_score,

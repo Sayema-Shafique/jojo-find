@@ -1,4 +1,5 @@
 import os
+import re
 
 # ============================================================
 # Role profile system
@@ -301,60 +302,105 @@ def activate_profile(name: str) -> None:
 # Title skip filter (negative filter — match → score 0)
 # ============================================================
 
-TITLE_SKIP = [
-    # Software Engineering
-    "software engineer", "software developer", "programmer", "coder",
-    "frontend developer", "front-end developer", "react developer",
-    "angular developer", "vue developer", "javascript developer",
-    "backend developer", "back-end developer", "node developer",
-    "python developer", "java developer", "c# developer", "c++ developer",
-    "full stack developer", "fullstack developer",
-    "devops engineer", "site reliability engineer", "sre",
-    "infrastructure engineer", "cloud engineer", "platform engineer",
-    "system administrator", "sysadmin", "network engineer",
-    "embedded engineer", "firmware engineer",
-    # Testing/QA
-    "qa engineer", "quality assurance engineer", "test engineer",
-    "sdet", "automation engineer", "manual tester",
-    "qa tester", "qa analyst", "test analyst",
-    "qa architect", "test architect",
-    # Data Science / ML (not Data Analyst)
-    "data scientist", "machine learning engineer", "ml engineer",
-    "ai engineer", "deep learning engineer", "nlp engineer",
-    "computer vision engineer", "data engineer", "etl developer",
-    # Design
-    "ux designer", "ui designer", "product designer",
-    "graphic designer", "visual designer", "interaction designer",
-    "user experience designer", "web designer",
-    # Content / Marketing
-    "content writer", "copywriter", "content strategist",
-    "seo specialist", "social media manager",
-    # HR / Admin
-    "hr manager", "human resources", "recruiter",
-    "talent acquisition", "administrative assistant",
-    "office manager", "receptionist", "executive assistant",
-    "personal assistant",
-    # Finance / Accounting
-    "accountant", "bookkeeper", "financial analyst",
-    "finance manager", "auditor", "tax analyst", "payroll",
-    # Healthcare
-    "nurse", "doctor", "physician", "pharmacist",
-    "dentist", "veterinarian", "clinical researcher",
-    # Legal
-    "lawyer", "attorney", "paralegal", "legal counsel",
-    # Education
-    "teacher", "professor", "lecturer", "instructor",
-    # Engineering (non-software)
-    "civil engineer", "mechanical engineer", "electrical engineer",
-    "chemical engineer", "structural engineer",
-    "architect", "quantity surveyor",
-    # Sciences
-    "chemist", "biologist", "physicist", "researcher",
-    "lab technician", "laboratory",
-    # Trades / manual
-    "warehouse", "forklift", "driver", "delivery",
-    "plumber", "electrician", "carpenter", "welder",
+# Regex patterns, matched against the lowercased title. A single hit scores the
+# job 0. These are deliberately broad: none of Sayema's target titles contain
+# "engineer", "developer", "qa", "quality", "test", or "technical" — so skipping
+# on those tokens costs nothing and catches the endless real-world variants
+# ("Senior Specialist QA", "Software QA Specialist", "Data Quality Engineer")
+# that an exact-phrase list always misses.
+TITLE_SKIP_PATTERNS = [
+    # --- Testing / QA (any form) ---
+    r"\bq\.?a\.?\b",
+    r"\bquality\b",
+    r"\btest(er|ing|s)?\b",
+    r"\bsdet\b",
+    r"\bautomation\b",
+    # --- Software engineering (any form) ---
+    r"\bengineer(ing|s)?\b",
+    r"\bdevelope?r?s?\b",
+    r"\bprogrammer\b",
+    r"\bcoder\b",
+    r"\bdev\s?ops\b",
+    r"\bsre\b",
+    r"\bsite reliability\b",
+    r"\bfull[\s-]?stack\b",
+    r"\bfront[\s-]?end\b",
+    r"\bback[\s-]?end\b",
+    r"\bsys\s?admin\b",
+    r"\bsystem admin",
+    r"\barchitect\b",
+    r"\bprogramme?r\b",
+    r"\bsoftware\b",
+    r"\bweb\s?master\b",
+    # --- Data science / ML (Data Analyst is a target role — not skipped) ---
+    r"\bdata scien(ce|tist)",
+    r"\bmachine learning\b",
+    r"\bdeep learning\b",
+    r"\b(ml|nlp)\b",
+    r"\bcomputer vision\b",
+    r"\bdata engineer",
+    r"\betl\b",
+    # --- Design ---
+    r"\b(ux|ui)\b",
+    r"\bdesigner\b",
+    r"\buser experience\b",
+    # --- Content / Marketing ---
+    r"\bcopywriter\b",
+    r"\bcontent (writer|strategist|specialist)\b",
+    r"\bseo\b",
+    r"\bsocial media\b",
+    # --- HR / Admin ---
+    r"\b(hr|human resources)\b",
+    r"\brecruit(er|ment)\b",
+    r"\btalent acquisition\b",
+    r"\b(administrative|executive|personal) assistant\b",
+    r"\breceptionist\b",
+    r"\boffice manager\b",
+    # --- Finance / Accounting ---
+    r"\baccount(ant|ing)\b",
+    r"\bbookkeep",
+    r"\bfinancial analyst\b",
+    r"\bauditor?\b",
+    r"\bpayroll\b",
+    r"\btax analyst\b",
+    # --- Healthcare ---
+    r"\bnurse\b", r"\bdoctor\b", r"\bphysician\b", r"\bpharmacist\b",
+    r"\bdentist\b", r"\bveterinarian\b", r"\bclinical\b",
+    # --- Legal ---
+    r"\blawyer\b", r"\battorney\b", r"\bparalegal\b", r"\blegal counsel\b",
+    # --- Education ---
+    r"\bteacher\b", r"\bprofessor\b", r"\blecturer\b", r"\binstructor\b",
+    # --- Non-software engineering / sciences / industrial ---
+    r"\bquantity surveyor\b",
+    r"\bchemist\b", r"\bbiologist\b", r"\bphysicist\b",
+    r"\blab(oratory)?\s?(technician)?\b",
+    r"\breagent",
+    r"\bproduction\b",
+    r"\bmanufacturing\b",
+    r"\bmaintenance\b",
+    # --- Trades / manual ---
+    r"\bwarehouse\b", r"\bforklift\b", r"\bdriver\b", r"\bcourier\b",
+    r"\bplumber\b", r"\belectrician\b", r"\bcarpenter\b", r"\bwelder\b",
+    r"\btechnician\b",
 ]
+
+TITLE_SKIP_RE = [re.compile(p) for p in TITLE_SKIP_PATTERNS]
+
+# Titles that are unambiguously hers keep their place even when they collide
+# with a skip token — "Customer Success Engineer" and "Technical Account
+# Manager" are real SaaS roles, not engineering ones.
+TITLE_RESCUE_PATTERNS = [
+    r"\bcustomer success\b",
+    r"\bclient success\b",
+    r"\bcustomer experience\b",
+    r"\bcustomer relationship\b",
+    r"\bclient relationship\b",
+    r"\baccount manage(r|ment)\b",
+    r"\bservice delivery\b",
+    r"\bclient services?\b",
+]
+
+TITLE_RESCUE_RE = [re.compile(p) for p in TITLE_RESCUE_PATTERNS]
 
 # ============================================================
 # Scoring settings
@@ -362,6 +408,17 @@ TITLE_SKIP = [
 
 SKILLS_CAP = 70
 SKILLS_MIN = 6
+
+# A job must show real domain signal, not just generic corporate vocabulary.
+# CORE keywords are the weight-10 entries in the active profile (customer
+# success, account management, CRM/SAP/Power BI). Without at least one, the job
+# scores 0 no matter how many "communication / leadership / agile" hits it has.
+CORE_SKILL_WEIGHT = 10
+CORE_SKILL_MIN = 10
+
+# Tier-2/3 keywords are supporting evidence, not the main signal. Capping their
+# combined contribution stops a job from reaching SKILLS_CAP on filler alone.
+GENERIC_SKILLS_CAP = 24
 
 MAX_SCORE = 100
 
