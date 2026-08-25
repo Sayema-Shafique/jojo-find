@@ -3,6 +3,8 @@ import logging
 import os
 import shutil
 
+import config
+
 logger = logging.getLogger(__name__)
 
 DOCS_DIR = os.path.join(os.path.dirname(__file__), "docs")
@@ -12,15 +14,53 @@ JOBS_DATA_SRC = os.path.join(os.path.dirname(__file__), "data", "jobs.json")
 COMPANY_CACHE_SRC = os.path.join(os.path.dirname(__file__), "data", "company_cache.json")
 
 
+# Fields the dashboard actually reads. Anything else is dead weight in a file
+# the browser has to download before it can render a single row.
+_PUBLISHED_FIELDS = (
+    "id", "title", "company", "company_normalized", "location", "url",
+    "source", "score", "breakdown", "date_posted", "seniority",
+    "remote_type", "job_type", "visa_sponsorship",
+    "salary", "salary_min", "salary_max", "salary_currency",
+)
+
+# Both render paths cut the description at 2000 chars, so shipping more than
+# that is wasted bytes.
+_DESC_LIMIT = 2000
+
+
+def _build_payload(all_jobs: list[dict]) -> list[dict]:
+    """Trim the cumulative store down to what the dashboard needs.
+
+    The cumulative file holds every job ever seen with full descriptions, which
+    grows past 15MB — the page renders its shell instantly and then sits empty
+    while that downloads. Publishing only alert-worthy jobs, with descriptions
+    truncated to what the UI displays, keeps it a fraction of the size.
+    """
+    payload = []
+    for job in all_jobs:
+        if job.get("score", 0) < config.ALERT_THRESHOLD:
+            continue
+        trimmed = {k: job[k] for k in _PUBLISHED_FIELDS if k in job}
+        desc = job.get("description") or ""
+        trimmed["description"] = desc[:_DESC_LIMIT]
+        payload.append(trimmed)
+    return payload
+
+
 def generate_dashboard(company_cache: dict | None = None) -> None:
     os.makedirs(DOCS_DIR, exist_ok=True)
 
     jobs_data_dest = os.path.join(DOCS_DIR, "jobs.json")
     if os.path.exists(JOBS_DATA_SRC):
         with open(JOBS_DATA_SRC) as f:
-            data = f.read()
+            all_jobs = json.load(f)
+        published = _build_payload(all_jobs)
         with open(jobs_data_dest, "w") as f:
-            f.write(data)
+            json.dump(published, f, separators=(",", ":"))
+        logger.info(
+            "Dashboard payload: %d of %d jobs (score >= %d)",
+            len(published), len(all_jobs), config.ALERT_THRESHOLD,
+        )
 
     cache_dest = os.path.join(DOCS_DIR, "company_cache.json")
     if company_cache:
