@@ -62,8 +62,15 @@ def score_job(job: JobPosting, company_enrichment: dict | None = None) -> tuple[
     location = _normalize(job.location)
 
     # --- Title skip filter (negative gate) ---
-    rescued = any(p.search(title) for p in config.TITLE_RESCUE_RE)
-    if not rescued:
+    # Hard skips (QA/testing) apply unconditionally; the rescue list can only
+    # excuse the softer patterns, so a target phrase in the title cannot drag a
+    # QA role through.
+    for pattern in config.TITLE_HARD_SKIP_RE:
+        m = pattern.search(title)
+        if m:
+            return 0, {"skip_reason": f"title_skip: {m.group(0)!r} ({pattern.pattern})"}
+
+    if not any(p.search(title) for p in config.TITLE_RESCUE_RE):
         for pattern in config.TITLE_SKIP_RE:
             m = pattern.search(title)
             if m:
